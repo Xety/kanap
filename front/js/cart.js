@@ -1,26 +1,31 @@
-import Elements from './elements.js';
+import Elements from './Html/Elements.js';
+import LocalStorage from './Storage/LocalStorage.js';
+import Network from './Api/Network.js';
+import ProductValidator from './Product/ProductValidator.js';
+import User from './User/User.js';
 
-class Cart  extends Elements {
+class Cart extends ProductValidator
+{
+    /**
+     * Diffine an ENUM for the type of action.
+     */
+    type = {
+        UP: 'increase',
+        DOWN: 'decrease'
+    }
 
     /**
      * The products contructor.
      *
      * @param {object} options A list of options to pass to the constructor.
      */
-    constructor(options = {}) {
+    constructor(options = {})
+    {
         super();
+
         this._baseURL = options.baseURL;
-        this._maxItemQuantity = options.maxItemQuantity;
-    }
-
-
-    /**
-     * Get the max item quantity.
-     *
-     * @returns {int} The max item quantity.
-     */
-     get MAX_ITEM_QUANTITY() {
-        return this._maxItemQuantity;
+        this.maxItemQuantity = options.maxItemQuantity;
+        this.minItemQuantity = options.minItemQuantity;
     }
 
     /**
@@ -28,9 +33,10 @@ class Cart  extends Elements {
      *
      * @returns {void}
      */
-     events() {
+     events()
+     {
         // Event : #deleteItem::click
-        let deleteProducts = document.getElementsByClassName("deleteItem");
+        const deleteProducts = document.getElementsByClassName("deleteItem");
         for (let i = 0; i < deleteProducts.length; i++) {
             deleteProducts[i].addEventListener('click', (product) => {
                 this.deleteProduct(product.target)
@@ -38,7 +44,7 @@ class Cart  extends Elements {
         }
 
         // Event : #itemQuantity::change
-        let productsQuantity = document.getElementsByClassName("itemQuantity");
+        const productsQuantity = document.getElementsByClassName("itemQuantity");
         for (let i = 0; i < productsQuantity.length; i++) {
             productsQuantity[i].addEventListener('change', (product) => {
                 this.changeProductQuantity(product.target);
@@ -47,10 +53,58 @@ class Cart  extends Elements {
         }
 
         // Event : #order::click
-        let orderSubmit = document.getElementById('order');
-        orderSubmit.addEventListener('click', () => {
+        const orderSubmit = document.getElementById('order');
+        orderSubmit.addEventListener('click', (element) => {
+            // Prevent the submit of the form.
+            element.preventDefault();
 
+            this.handleOrder();
         })
+    }
+
+    /**
+     * Handle the order
+     *
+     * @returns {void}
+     */
+    async handleOrder()
+    {
+        const user = new User({
+            firstName : document.getElementById('firstName').value,
+            lastName : document.getElementById('lastName').value,
+            address : document.getElementById('address').value,
+            city : document.getElementById('city').value,
+            email : document.getElementById('email').value
+        });
+
+        // Check the user validation.
+        if (user.validate() == false) {
+            return false;
+        }
+
+        // Get all keys from localStorage and remove color in each ID.
+        let products = Object.keys(localStorage).map(function(productId) {
+            const color =  localStorage[productId].split(',')[0];
+
+            return productId.replace(`-${color}`,'');
+        });
+
+        // Remove duplicate ID.
+        const productsSet = new Set(products);
+        products = [...productsSet];
+
+        // Convert data to JSON.
+        const data = JSON.stringify({
+            contact: user,
+            products: products
+        });
+
+        // POST data to the API and get the orderId.
+        const orderId = await Network.postOrderToAPI(`${this._baseURL}order`, data);
+
+        //Delete the localStorage and redirect the user to the confirmation page with the orderId.
+        localStorage.clear();
+        document.location.href = `./confirmation.html?orderid=${orderId}`;
     }
 
     /**
@@ -60,23 +114,23 @@ class Cart  extends Elements {
      *
      * @returns {bool} Whether the quantity has been changed successfully.
      */
-    changeProductQuantity(element) {
-        let article = element.closest("article");
-        let id = article.dataset.id;
-        let color = article.dataset.color;
+    changeProductQuantity(element)
+    {
+        const article = element.closest("article");
+        const id = article.dataset.id;
+        const color = article.dataset.color;
 
-        let newQuantity = element.value;
-        let productValue = localStorage.getItem(id + "-" + color);
-        let oldQuantity = parseInt(productValue.split(',')[1]);
+        const newQuantity = element.value;
+        const oldQuantity = parseInt(LocalStorage.getItem(id, color).split(',')[1]);
 
         let difference = {};
 
         //  We need to determine if the new value increase or decrease the quantity so we can do the right operation (addition or subtraction) to the total quantity.
         if (oldQuantity < newQuantity) {
-            difference.type = 'increase';
+            difference.type = this.type.UP;
             difference.number = newQuantity - oldQuantity;
         } else if (oldQuantity > newQuantity) {
-            difference.type = 'decrease';
+            difference.type = this.type.DOWN;
             difference.number = oldQuantity - newQuantity;
         } else {
             // The new value is the same as the old value.
@@ -84,17 +138,17 @@ class Cart  extends Elements {
         }
 
         // Check the quantity requirements.
-        if (newQuantity <= 0 || newQuantity > this.MAX_ITEM_QUANTITY) {
-            alert("Le nombre de Kanap doit être compris entre 1 et " + this.MAX_ITEM_QUANTITY);
+        if (this.validateQuantity(newQuantity) == false) {
+            alert(`Le nombre de Kanap doit être compris entre ${this.minItemQuantity} et ${this.maxItemQuantity}`);
 
             return false;
           }
 
         // Update the localStorage.
-        localStorage.setItem(id + "-" + color, [color, newQuantity]);
+        LocalStorage.setItem(id, color, [color, newQuantity]);
 
         // Refresh the cart price and quantity.
-        return this.refreshCartTotal(color + "," + difference.number, article, difference.type);
+        return this.refreshCartTotal(`${color},${difference.number}`, article, difference.type);
     }
 
     /**
@@ -104,17 +158,18 @@ class Cart  extends Elements {
      *
      * @returns {bool} Whether the product has been deleted successfully.
      */
-    deleteProduct(element) {
+    deleteProduct(element)
+    {
         // Get the closer <article> element from the p element.
-        let article = element.closest("article");
-        let id = article.dataset.id;
-        let color = article.dataset.color;
+        const article = element.closest("article");
+        const id = article.dataset.id;
+        const color = article.dataset.color;
 
         // We get the color and quantity values from localStorage before deleting them.
         let product;
-        if (product = localStorage.getItem(id + "-" + color)) {
+        if (product = LocalStorage.getItem(id, color)) {
             // Delete the product from the local storage and remove it from the DOM.
-            localStorage.removeItem(id + "-" + color);
+            LocalStorage.removeItem(id, color);
         } else {
             return false;
         }
@@ -125,7 +180,7 @@ class Cart  extends Elements {
             article.remove();
         }
 
-        return true
+        return true;
     }
 
     /**
@@ -137,23 +192,31 @@ class Cart  extends Elements {
      *
      * @returns {bool} Return true to indicate everything is good.
      */
-    refreshCartTotal(product, article, type = "decrease") {
-        let quantity = parseInt(product.split(',')[1]);
+    refreshCartTotal(product, article, type = this.type.DOWN)
+    {
+        const quantity = parseInt(product.split(',')[1]);
 
         // Get old price and quantity from the DOM.
-        let oldQuantity = document.getElementById('totalQuantity').textContent;
-        let oldPrice = document.getElementById('totalPrice').textContent;
+        const oldQuantity = parseInt(document.getElementById('totalQuantity').textContent);
+        const oldPrice = parseInt(document.getElementById('totalPrice').textContent);
 
         // Get the <p> element that have the price of the product.
-        let productPrice = article.closest('div').querySelector('.cart__item__content__description').lastChild;
+        let productPrice = article.querySelector('.cart__item__content__description').lastChild;
+
+        productPrice = parseInt(productPrice.textContent);
+
+        let newQuantity;
+        let newPrice;
 
         // Calculate the new price and quantity.
-        if (type == "decrease") {
-            var newQuantity = parseInt(oldQuantity) - quantity;
-            var newPrice = parseInt(oldPrice) - (parseInt(productPrice.textContent) * quantity);
+        if (type == this.type.DOWN) {
+            newQuantity = oldQuantity - quantity;
+            newPrice = oldPrice - (productPrice * quantity);
+        } else if (type == this.type.UP) {
+            newQuantity = oldQuantity + quantity;
+            newPrice = oldPrice + (productPrice * quantity);
         } else {
-            var newQuantity = parseInt(oldQuantity) + quantity;
-            var newPrice = parseInt(oldPrice) + (parseInt(productPrice.textContent) * quantity);
+            return false;
         }
 
         // Update the new price and quantity.
@@ -168,97 +231,23 @@ class Cart  extends Elements {
      *
      * @returns {void}
      */
-    async render() {
-        let keys = Object.keys(localStorage);
+    async render()
+    {
+        const keys = Object.keys(localStorage);
 
         let totalPrice = 0;
         let totalProducts = 0;
 
         for (let i = 0; i < keys.length; i++) {
             // Split the key to separate the id and color.
-            let [id, color] = keys[i].split('-');
+            const [id, color] = keys[i].split('-');
 
-            let quantity = parseInt(localStorage.getItem(keys[i]).split(',')[1]);
+            const quantity = parseInt(LocalStorage.getItem(keys[i]).split(',')[1]);
 
             // Get the product info fromm the API.
-            let product = await this.getInfoById(id);
+            const product = await Network.getFromAPI(this._baseURL + id);
 
-            // Create the article element.
-            let article = document.createElement('article');
-            article.setAttribute('class', 'cart__item');
-            article.setAttribute('data-id', product._id);
-            article.setAttribute('data-color', color);
-
-            // Create a div element, then an image element and append them to the article.
-            let divItemImg = document.createElement("div");
-            divItemImg.setAttribute("class", "cart__item__img");
-            divItemImg.appendChild(this.imgElement(product));
-
-            article.appendChild(divItemImg);
-
-            // Create the div element for the item content.
-            let cartItemContent = document.createElement('div');
-            cartItemContent.setAttribute('class', 'cart__item__content');
-            article.appendChild(cartItemContent);
-
-            // Create the div element for the content description with title, price and color.
-            let cartItemContentDescription = document.createElement('div');
-            cartItemContentDescription.setAttribute('class', 'cart__item__content__description');
-
-            let productName = document.createElement('h2');
-            productName.appendChild(document.createTextNode(product.name));
-
-            let productColor = document.createElement('p');
-            productColor.appendChild(document.createTextNode(color));
-
-            let productPrice = document.createElement('p');
-            productPrice.appendChild(document.createTextNode(product.price + "€"));
-
-            cartItemContentDescription.append(
-                productName,
-                productColor,
-                productPrice
-            );
-            cartItemContent.appendChild(cartItemContentDescription);
-
-            // Create the div element for the content settings with quantity and delete.
-            let cartItemContentSettings = document.createElement('div');
-            cartItemContentSettings.setAttribute('class', 'cart__item__content__settings');
-
-            let settingsQuantity = document.createElement('div');
-            settingsQuantity.setAttribute('class', 'cart__item__content__settings__quantity');
-
-            let p = document.createElement('p');
-            p.appendChild(document.createTextNode('Qté : '));
-
-            let input = document.createElement('input');
-            input.setAttribute('type', 'number');
-            input.setAttribute('class', 'itemQuantity');
-            input.setAttribute('min', 1);
-            input.setAttribute('max', 100);
-            input.setAttribute('value', quantity);
-
-            settingsQuantity.append(p, input);
-            cartItemContentSettings.appendChild(settingsQuantity);
-
-            let settingsDelete = document.createElement('div');
-            settingsDelete.setAttribute('class', 'cart__item__content__settings__delete');
-
-            let pDeleteItem = document.createElement('p');
-            pDeleteItem.setAttribute('class', 'deleteItem');
-            pDeleteItem.appendChild(document.createTextNode('Supprimer'));
-            settingsDelete.appendChild(pDeleteItem);
-
-            // Append the div elements settings__quantity & settings__delete to the content__settings element.
-            cartItemContentSettings.append(settingsQuantity, settingsDelete);
-
-            cartItemContent.appendChild(cartItemContentSettings);
-
-            article.appendChild(cartItemContent);
-
-            // Get the section items and append the article.
-            let items = document.getElementById('cart__items');
-            items.appendChild(article);
+            Elements.createProductCart(product, color, quantity);
 
             // Increment the totalPrice and totalProducts.
             totalPrice += product.price * quantity;
@@ -272,33 +261,12 @@ class Cart  extends Elements {
         // Trigger all events.
         this.events();
     }
-
-    /**
-      * Get a product by it's ID.
-      *
-      * @param {int} id The id of the product to get.
-      *
-      * @returns {object} The product informations.
-      */
-     async getInfoById(id) {
-        let product = fetch(this._baseURL + id)
-        .then(function(response)  {
-            return response.json();
-        })
-        .then(function(product) {
-            return product;
-        })
-        .catch(function(error) {
-            console.log("Erreur : " + error);
-        });
-
-        return product;
-      }
 }
 
 // Initialize the class and the render function.
-let cart = new Cart({
+const cart = new Cart({
     baseURL: "http://localhost:3000/api/products/",
-    maxItemQuantity: 100
+    maxItemQuantity: 100,
+    minItemQuantity: 1
 });
 cart.render();
